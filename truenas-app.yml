@@ -49,6 +49,9 @@ services:
       - MATCH_THRESHOLD=0.85
       # Log verbosity: DEBUG | INFO | WARNING | ERROR
       - LOG_LEVEL=INFO
+      # Directory inside the container where log files are written.
+      # Must match the volume mount target below.
+      - LOG_DIR=/logs
       # Port the health check endpoint listens on inside the container.
       # If you change this, update the 'ports' mapping below to match.
       - HEALTH_PORT=8080
@@ -57,6 +60,13 @@ services:
     # Change the left number (host port) if 8080 is already in use.
     ports:
       - "8080:${HEALTH_PORT:-8080}"
+
+    # Log files are written here inside the container and persisted on the host.
+    #   sync.log     — all sync actions (rotating, max 10 MB × 5 backups)
+    #   unmatched.txt — deduplicated list of titles that could not be matched
+    # Change the host path (left side) to wherever you want logs stored.
+    volumes:
+      - /mnt/tank/logs/komga-suwayomi-sync:/logs
 
     healthcheck:
       test:

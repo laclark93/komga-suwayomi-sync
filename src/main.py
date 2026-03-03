@@ -1,26 +1,32 @@
 import asyncio
 import logging
 import signal
+from pathlib import Path
 
 from .config import Settings
 from .health.server import HealthServer
 from .komga.client import KomgaClient
 from .komga.sse import KomgaSSEListener
+from .logging_setup import setup_logging
 from .matching.matcher import MangaMatcher
 from .suwayomi.client import SuwayomiClient
 from .sync.cache import MappingCache
 from .sync.engine import SyncEngine
+from .sync.unmatched import UnmatchedTitlesLog
 
 
 async def main():
     settings = Settings()
 
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    setup_logging(settings)
     logger = logging.getLogger("komga-suwayomi-sync")
     logger.info("Starting komga-suwayomi-sync")
+
+    # Persistent unmatched titles log
+    log_dir = Path(settings.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    unmatched_log = UnmatchedTitlesLog(log_dir)
+    logger.info("Unmatched titles will be recorded to %s", log_dir / "unmatched.txt")
 
     # Initialize clients
     komga = KomgaClient(settings)
@@ -28,7 +34,10 @@ async def main():
     await komga.start()
     await suwayomi.start()
 
-    matcher = MangaMatcher(threshold=settings.match_threshold)
+    matcher = MangaMatcher(
+        threshold=settings.match_threshold,
+        unmatched_log=unmatched_log,
+    )
     cache = MappingCache(ttl_seconds=settings.cache_ttl_seconds)
     engine = SyncEngine(komga, suwayomi, matcher, cache, settings)
 

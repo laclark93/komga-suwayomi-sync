@@ -2,8 +2,11 @@ import logging
 import re
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import unquote
+
+if TYPE_CHECKING:
+    from ..sync.unmatched import UnmatchedTitlesLog
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +68,13 @@ class MangaMatcher:
       Pass 3 - Fuzzy ratio on metadata title above threshold
     """
 
-    def __init__(self, threshold: float = 0.85):
+    def __init__(
+        self,
+        threshold: float = 0.85,
+        unmatched_log: Optional["UnmatchedTitlesLog"] = None,
+    ):
         self._threshold = threshold
+        self._unmatched_log = unmatched_log
 
     def match_series_to_manga(
         self,
@@ -117,7 +125,10 @@ class MangaMatcher:
             return result
 
         # Nothing worked — log at ERROR so it's visible during debugging
+        # and record to the persistent unmatched titles file.
         best_match, best_score = self._best_candidate(k_norm, candidates)
+        best_title = best_match["title"] if best_match else None
+
         if best_match:
             logger.error(
                 "UNMATCHED TITLE: Komga series '%s' (folder '%s') could not be "
@@ -127,7 +138,7 @@ class MangaMatcher:
                 "folder name matches the Suwayomi manga title.",
                 komga_title,
                 folder_name or "unknown",
-                best_match["title"],
+                best_title,
                 best_score,
                 self._threshold,
             )
@@ -137,6 +148,15 @@ class MangaMatcher:
                 "Suwayomi library is empty or all titles failed to normalize.",
                 komga_title,
             )
+
+        if self._unmatched_log is not None:
+            self._unmatched_log.record(
+                komga_title=komga_title,
+                folder_name=folder_name,
+                best_candidate=best_title,
+                best_score=best_score,
+            )
+
         return None
 
     def _run_passes(
