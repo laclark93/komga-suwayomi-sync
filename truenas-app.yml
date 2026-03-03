@@ -49,18 +49,20 @@ services:
       - MATCH_THRESHOLD=0.85
       # Log verbosity: DEBUG | INFO | WARNING | ERROR
       - LOG_LEVEL=INFO
+      # Port the health check endpoint listens on inside the container.
+      # If you change this, update the 'ports' mapping below to match.
+      - HEALTH_PORT=8080
 
-    # Health check endpoint — used by TrueNAS to report app status
+    # Maps HEALTH_PORT inside the container to the same port on the host.
+    # Change the left number (host port) if 8080 is already in use.
     ports:
-      - "8080:8080"
+      - "8080:${HEALTH_PORT:-8080}"
 
     healthcheck:
       test:
         [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$$HEALTH_PORT/health')\"",
         ]
       interval: 30s
       timeout: 5s
