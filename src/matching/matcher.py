@@ -3,6 +3,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from typing import Optional
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,22 @@ def normalize_title(title: str) -> str:
     return s
 
 
+def _extract_folder_name(series_url: str) -> str:
+    """
+    Extract the last path component from a Komga series URL/path.
+
+    Handles:
+      - Unix paths:    /mnt/data/manga/Madan No Ichi
+      - Windows paths: C:\\data\\manga\\Madan No Ichi
+      - URL-encoded:   /data/manga/Sword%20Art%20Online
+    """
+    if not series_url:
+        return ""
+    path = unquote(series_url)
+    path = path.replace("\\", "/").rstrip("/")
+    return path.split("/")[-1] if "/" in path else path
+
+
 def _title_similarity(a: str, b: str) -> float:
     """Similarity ratio between two already-normalized titles."""
     return SequenceMatcher(None, a, b).ratio()
@@ -37,10 +54,15 @@ class MangaMatcher:
     """
     Matches Komga series to Suwayomi manga by title.
 
-    Uses a 3-pass approach:
-      1. Exact normalized match
-      2. Containment check (one title contains the other)
-      3. Fuzzy ratio above threshold
+    Matching order:
+      Pass 0 - Folder name (from Komga series URL) vs Suwayomi title
+               This resolves language mismatches where Komga has fetched an
+               English title (e.g. "Ichi the Witch") but the download folder
+               still uses the source/romanized name ("Madan No Ichi") that
+               Suwayomi also uses.
+      Pass 1 - Exact normalized match on metadata title
+      Pass 2 - Containment check on metadata title
+      Pass 3 - Fuzzy ratio on metadata title above threshold
     """
 
     def __init__(self, threshold: float = 0.85):
@@ -50,82 +72,120 @@ class MangaMatcher:
         self,
         komga_title: str,
         suwayomi_manga_list: list[dict],
+        komga_url: str = "",
     ) -> Optional[dict]:
         """
-        Find the best Suwayomi manga match for a Komga series title.
-        Returns the matched manga dict or None.
+        Find the best Suwayomi manga match for a Komga series.
+
+        komga_title: the metadata title shown in Komga (may be English)
+        komga_url:   the series folder path from Komga (closer to the
+                     download-time name Suwayomi uses)
         """
+        candidates = [
+            (manga, normalize_title(manga["title"]))
+            for manga in suwayomi_manga_list
+        ]
+
+        # Pass 0: match by folder name extracted from the series path.
+        # Because both Komga and Suwayomi reference the same directory,
+        # the folder name is the most reliable cross-language identifier.
+        folder_name = _extract_folder_name(komga_url)
+        folder_norm = normalize_title(folder_name)
         k_norm = normalize_title(komga_title)
+
+        if folder_norm and folder_norm != k_norm:
+            result = self._run_passes(folder_norm, candidates)
+            if result:
+                logger.debug(
+                    "Folder-name match: Komga '%s' (folder '%s') -> Suwayomi '%s'",
+                    komga_title,
+                    folder_name,
+                    result["title"],
+                )
+                return result
+
+        # Passes 1-3: match using the metadata title
         if not k_norm:
+            logger.error(
+                "UNMATCHED TITLE: Komga series '%s' has no normalizable title",
+                komga_title,
+            )
             return None
 
-        candidates = []
-        for manga in suwayomi_manga_list:
-            s_norm = normalize_title(manga["title"])
-            candidates.append((manga, s_norm))
+        result = self._run_passes(k_norm, candidates)
+        if result:
+            return result
 
-        # Pass 1: Exact normalized match
-        for manga, s_norm in candidates:
-            if k_norm == s_norm:
-                logger.debug(
-                    "Exact match: '%s' == '%s'", komga_title, manga["title"]
-                )
-                return manga
-
-        # Pass 2: Containment (one is a substring of the other)
-        for manga, s_norm in candidates:
-            if not s_norm:
-                continue
-            if k_norm in s_norm or s_norm in k_norm:
-                shorter = min(len(k_norm), len(s_norm))
-                longer = max(len(k_norm), len(s_norm))
-                ratio = shorter / longer
-                if ratio > 0.6:
-                    logger.debug(
-                        "Containment match: '%s' <-> '%s' (ratio=%.2f)",
-                        komga_title,
-                        manga["title"],
-                        ratio,
-                    )
-                    return manga
-
-        # Pass 3: Fuzzy matching
-        best_match = None
-        best_score = 0.0
-        for manga, s_norm in candidates:
-            if not s_norm:
-                continue
-            score = _title_similarity(k_norm, s_norm)
-            if score > best_score:
-                best_score = score
-                best_match = manga
-
-        if best_match and best_score >= self._threshold:
-            logger.debug(
-                "Fuzzy match: '%s' <-> '%s' (score=%.3f)",
-                komga_title,
-                best_match["title"],
-                best_score,
-            )
-            return best_match
-
-        # No match found - log at ERROR level for visibility
+        # Nothing worked — log at ERROR so it's visible during debugging
+        best_match, best_score = self._best_candidate(k_norm, candidates)
         if best_match:
             logger.error(
-                "UNMATCHED TITLE: Komga series '%s' could not be matched to any "
-                "Suwayomi manga. Best candidate: '%s' (score=%.3f, threshold=%.2f)",
+                "UNMATCHED TITLE: Komga series '%s' (folder '%s') could not be "
+                "matched to any Suwayomi manga. "
+                "Best candidate: '%s' (score=%.3f, threshold=%.2f). "
+                "If this is a language mismatch, check that the Komga series "
+                "folder name matches the Suwayomi manga title.",
                 komga_title,
+                folder_name or "unknown",
                 best_match["title"],
                 best_score,
                 self._threshold,
             )
         else:
             logger.error(
-                "UNMATCHED TITLE: Komga series '%s' could not be matched - "
-                "no candidates in Suwayomi library",
+                "UNMATCHED TITLE: Komga series '%s' could not be matched — "
+                "Suwayomi library is empty or all titles failed to normalize.",
                 komga_title,
             )
         return None
+
+    def _run_passes(
+        self,
+        search_norm: str,
+        candidates: list[tuple[dict, str]],
+    ) -> Optional[dict]:
+        """
+        Run the three title-matching passes against a normalized search string.
+        Returns the first match found, or None.
+        """
+        # Pass 1: Exact
+        for manga, s_norm in candidates:
+            if search_norm == s_norm:
+                return manga
+
+        # Pass 2: Containment
+        for manga, s_norm in candidates:
+            if not s_norm:
+                continue
+            if search_norm in s_norm or s_norm in search_norm:
+                shorter = min(len(search_norm), len(s_norm))
+                longer = max(len(search_norm), len(s_norm))
+                if shorter / longer > 0.6:
+                    return manga
+
+        # Pass 3: Fuzzy
+        best_match, best_score = self._best_candidate(search_norm, candidates)
+        if best_match and best_score >= self._threshold:
+            return best_match
+
+        return None
+
+    def _best_candidate(
+        self,
+        search_norm: str,
+        candidates: list[tuple[dict, str]],
+    ) -> tuple[Optional[dict], float]:
+        """Return the highest-scoring candidate and its score."""
+        best_match = None
+        best_score = 0.0
+        for manga, s_norm in candidates:
+            if not s_norm:
+                continue
+            score = _title_similarity(search_norm, s_norm)
+            if score > best_score:
+                best_score = score
+                best_match = manga
+        return best_match, best_score
 
 
 def match_chapter(

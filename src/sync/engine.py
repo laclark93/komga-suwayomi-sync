@@ -76,7 +76,7 @@ class SyncEngine:
             series_title = self._extract_series_title(k_series)
 
             s_manga = self._matcher.match_series_to_manga(
-                series_title, suwayomi_library
+                series_title, suwayomi_library, komga_url=k_series.get("url", "")
             )
             if not s_manga:
                 unmatched_series += 1
@@ -155,7 +155,7 @@ class SyncEngine:
             series_title = self._extract_series_title(k_series)
 
             s_manga = self._matcher.match_series_to_manga(
-                series_title, suwayomi_library
+                series_title, suwayomi_library, komga_url=k_series.get("url", "")
             )
             if not s_manga:
                 return
