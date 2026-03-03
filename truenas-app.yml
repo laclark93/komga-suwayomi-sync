@@ -1,0 +1,68 @@
+# komga-suwayomi-sync - TrueNAS SCALE Custom App
+#
+# HOW TO INSTALL:
+#   1. In TrueNAS SCALE, go to Apps > Discover Apps > Custom App
+#   2. Paste the contents of this file into the YAML editor
+#   3. Fill in your values under the 'environment' section below
+#   4. Click Install
+#
+# NETWORKING NOTE:
+#   TrueNAS app containers cannot resolve each other by hostname across
+#   different apps. Use your TrueNAS server's LAN IP (e.g. 192.168.1.x)
+#   with the port each app exposes on the host.
+#   Komga default port:    25600
+#   Suwayomi default port: 4567
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  komga-suwayomi-sync:
+    image: laclark93/komga-suwayomi-sync:latest
+    container_name: komga-suwayomi-sync
+    restart: unless-stopped
+
+    environment:
+      # ── Komga ──────────────────────────────────────────────────────────────
+      # Replace with your TrueNAS LAN IP and Komga host port
+      - KOMGA_BASE_URL=http://192.168.1.x:25600
+
+      # Komga auth: provide EITHER an API key OR username + password.
+      # To create an API key in Komga: Settings > API Keys > Generate
+      - KOMGA_API_KEY=
+      # - KOMGA_USERNAME=admin@example.com
+      # - KOMGA_PASSWORD=yourpassword
+
+      # ── Suwayomi ───────────────────────────────────────────────────────────
+      # Replace with your TrueNAS LAN IP and Suwayomi host port
+      - SUWAYOMI_BASE_URL=http://192.168.1.x:4567
+
+      # Only needed if Suwayomi has authentication enabled
+      - SUWAYOMI_USERNAME=
+      - SUWAYOMI_PASSWORD=
+
+      # ── Sync behaviour (optional, defaults shown) ───────────────────────────
+      # Run a full sync on container start to catch up on existing read history
+      - INITIAL_SYNC_ON_START=true
+      # Fallback polling interval in seconds (runs alongside SSE for safety)
+      - POLLING_INTERVAL_SECONDS=300
+      # Title matching strictness: 0.0 (loose) – 1.0 (exact). 0.85 works well.
+      # Lower this if manga titles differ a lot between Komga and Suwayomi.
+      - MATCH_THRESHOLD=0.85
+      # Log verbosity: DEBUG | INFO | WARNING | ERROR
+      - LOG_LEVEL=INFO
+
+    # Health check endpoint — used by TrueNAS to report app status
+    ports:
+      - "8080:8080"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
