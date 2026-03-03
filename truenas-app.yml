@@ -12,6 +12,15 @@
 #   with the port each app exposes on the host.
 #   Komga default port:    25600
 #   Suwayomi default port: 4567
+#
+# LOG FILES:
+#   Logs are written to a named Docker volume (komga-suwayomi-sync-logs)
+#   that TrueNAS manages automatically as an ix-volume on your pool.
+#   No host path configuration needed.
+#     sync.log      — all sync actions (rotating, max 10 MB × 5 backups)
+#     unmatched.txt — deduplicated list of titles that could not be matched
+#   To access them: Apps > komga-suwayomi-sync > Logs, or browse to
+#   /mnt/.ix-apps/app_mounts/komga-suwayomi-sync/komga-suwayomi-sync-logs/
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -49,9 +58,6 @@ services:
       - MATCH_THRESHOLD=0.85
       # Log verbosity: DEBUG | INFO | WARNING | ERROR
       - LOG_LEVEL=INFO
-      # Directory inside the container where log files are written.
-      # Must match the volume mount target below.
-      - LOG_DIR=/logs
       # Port the health check endpoint listens on inside the container.
       # If you change this, update the 'ports' mapping below to match.
       - HEALTH_PORT=8080
@@ -61,12 +67,10 @@ services:
     ports:
       - "8080:${HEALTH_PORT:-8080}"
 
-    # Log files are written here inside the container and persisted on the host.
-    #   sync.log     — all sync actions (rotating, max 10 MB × 5 backups)
-    #   unmatched.txt — deduplicated list of titles that could not be matched
-    # Change the host path (left side) to wherever you want logs stored.
+    # Named volume — TrueNAS creates and manages this ix-volume automatically.
+    # No host path needed. LOG_DIR defaults to /logs inside the container.
     volumes:
-      - /mnt/tank/logs/komga-suwayomi-sync:/logs
+      - komga-suwayomi-sync-logs:/logs
 
     healthcheck:
       test:
@@ -78,3 +82,6 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+
+volumes:
+  komga-suwayomi-sync-logs:
