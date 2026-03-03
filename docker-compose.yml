@@ -1,0 +1,33 @@
+services:
+  komga-suwayomi-sync:
+    build: .
+    container_name: komga-suwayomi-sync
+    restart: unless-stopped
+    environment:
+      # Required - Komga connection
+      - KOMGA_BASE_URL=http://komga:25600
+      # Use API key (preferred) OR username/password for Komga
+      - KOMGA_API_KEY=${KOMGA_API_KEY:-}
+      - KOMGA_USERNAME=${KOMGA_USERNAME:-}
+      - KOMGA_PASSWORD=${KOMGA_PASSWORD:-}
+
+      # Required - Suwayomi connection
+      - SUWAYOMI_BASE_URL=http://suwayomi:4567
+      # Only needed if Suwayomi has auth enabled
+      - SUWAYOMI_USERNAME=${SUWAYOMI_USERNAME:-}
+      - SUWAYOMI_PASSWORD=${SUWAYOMI_PASSWORD:-}
+
+      # Optional - sync behavior
+      - INITIAL_SYNC_ON_START=${INITIAL_SYNC_ON_START:-true}
+      - POLLING_INTERVAL_SECONDS=${POLLING_INTERVAL_SECONDS:-300}
+      - MATCH_THRESHOLD=${MATCH_THRESHOLD:-0.85}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HEALTH_PORT=8080
+    ports:
+      - "8080:8080"
+    networks:
+      - media
+
+networks:
+  media:
+    external: true
